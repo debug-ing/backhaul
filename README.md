@@ -1,7 +1,7 @@
 # Backhaul
 
 
-This repository is a copt of the original project and is still under active development. Please note that it is not yet ready for production use and may undergo significant changes.
+This repository is a copy of the original project and is still under active development. Please note that it is not yet ready for production use and may undergo significant changes.
 
 You can find the original project at the following link:  
 [Link to the original project](https://github.com/Musixal/Backhaul)
