@@ -10,18 +10,11 @@ import (
 )
 
 func SendBinaryString(conn interface{}, message string) error {
-	// Header size
-	const headerSize = 2
-
-	// Create a buffer with the appropriate size for the message
-	buf := make([]byte, headerSize+len(message))
-
-	// Encode the length of the message as a big-endian 2-byte unsigned integer
-	binary.BigEndian.PutUint16(buf[:headerSize], uint16(len(message)))
-
-	// Copy the message into the buffer after the length
-	copy(buf[headerSize:], message)
-
+	b := NewAction("NormalFrame")
+	buf, err := b.EncodeString(message)
+	if err != nil {
+		return fmt.Errorf("failed to encode message: %w", err)
+	}
 	switch c := conn.(type) {
 	case net.Conn:
 		// Send the buffer over the connection
@@ -60,12 +53,11 @@ func ReceiveBinaryString(conn interface{}) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported connection type: %T", conn)
 	}
-
-	// Decode the length of the message from the 2-byte buffer
-	messageLength := binary.BigEndian.Uint16(lenBuf[:2])
-
-	// Create a buffer of the appropriate size to hold the message
-	messageBuf := make([]byte, messageLength)
+	b := NewAction("NormalFrame")
+	m, messageBuf, err := b.DecodeString(lenBuf)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode message length: %w", err)
+	}
 
 	switch c := conn.(type) {
 	case net.Conn:
@@ -81,25 +73,15 @@ func ReceiveBinaryString(conn interface{}) (string, error) {
 	}
 
 	// Convert the message buffer to a string and return it
-	return string(messageBuf), nil
+	return m, nil
 }
 
 func SendBinaryTransportString(conn interface{}, message string, transport byte) error {
-	// Header size
-	const headerSize = 3
-
-	// Create a buffer with the appropriate size for the message
-	buf := make([]byte, headerSize+len(message))
-
-	// Encode the length of the message as a big-endian 2-byte unsigned integer
-	binary.BigEndian.PutUint16(buf[:headerSize], uint16(len(message)))
-
-	// encode the transport tyope
-	buf[2] = transport
-
-	// Copy the message into the buffer after the length
-	copy(buf[headerSize:], message)
-
+	b := NewAction("NormalFrame")
+	buf, err := b.Encode(message, transport)
+	if err != nil {
+		return fmt.Errorf("failed to encode message: %w", err)
+	}
 	switch c := conn.(type) {
 	case net.Conn:
 		// Send the buffer over the connection
@@ -138,16 +120,11 @@ func ReceiveBinaryTransportString(conn interface{}) (string, byte, error) {
 	default:
 		return "", 0, fmt.Errorf("unsupported connection type: %T", conn)
 	}
-
-	// Decode the length of the message from the 2-byte buffer
-	messageLength := binary.BigEndian.Uint16(lenBuf[:2])
-
-	// decode the transport
-	transport := lenBuf[2]
-
-	// Create a buffer of the appropriate size to hold the message
-	messageBuf := make([]byte, messageLength)
-
+	b := NewAction("NormalFrame")
+	message, messageBuf, transport, err := b.Decode(lenBuf)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to decode message length: %w", err)
+	}
 	switch c := conn.(type) {
 	case net.Conn:
 		if _, err := io.ReadFull(c, messageBuf); err != nil {
@@ -162,19 +139,20 @@ func ReceiveBinaryTransportString(conn interface{}) (string, byte, error) {
 	}
 
 	// Convert the message buffer to a string and return it
-	return string(messageBuf), transport, nil
+	return message, transport, nil
 }
 
 // SendPort sends the port number as a 2-byte big-endian unsigned integer.
 func SendBinaryInt(conn net.Conn, port uint16) error {
 	// Create a 2-byte slice to hold the port number
-	buf := make([]byte, 2)
+	// buf := make([]byte, 2)
+	var buf [2]byte
 
 	// Encode the port number as a big-endian 2-byte unsigned integer
-	binary.BigEndian.PutUint16(buf, port)
+	binary.BigEndian.PutUint16(buf[:], port)
 
 	// Send the 2-byte buffer over the connection
-	if _, err := conn.Write(buf); err != nil {
+	if _, err := conn.Write(buf[:]); err != nil {
 		return fmt.Errorf("failed to send port number %d: %w", port, err)
 	}
 
@@ -185,7 +163,6 @@ func SendBinaryInt(conn net.Conn, port uint16) error {
 // ReceivePort reads a 2-byte big-endian unsigned integer directly from the connection
 func ReceiveBinaryInt(conn net.Conn) (uint16, error) {
 	var port uint16
-
 	// Use binary.Read to read the port directly from the connection
 	err := binary.Read(conn, binary.BigEndian, &port)
 	if err != nil {
@@ -232,7 +209,6 @@ func ReceiveBinaryByte(conn net.Conn) (byte, error) {
 	default:
 		return 0, fmt.Errorf("unsupported connection type: %T", conn)
 	}
-
 	// Convert the message buffer to a string and return it
 	return messageBuf[0], nil
 }
