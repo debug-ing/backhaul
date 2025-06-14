@@ -11,7 +11,7 @@ type Action interface {
 	Encode(msg string, transport byte) ([]byte, error)
 	EncodeString(msg string) ([]byte, error)
 
-	Decode(data []byte) (string, []byte, byte, error)
+	Decode(data []byte) (string, byte, error)
 	DecodeString(data []byte) (string, []byte, error)
 }
 
@@ -49,18 +49,31 @@ func (n *NormalFrame) Encode(msg string, transport byte) ([]byte, error) {
 	copy(buf[headerSize:], msg)
 	return buf, nil
 }
-func (n *NormalFrame) Decode(data []byte) (string, []byte, byte, error) {
-	if len(data) < 3 {
-		return "", nil, 0, fmt.Errorf("frame too short")
+func (n *NormalFrame) Decode(data []byte) (string, byte, error) {
+	// // if len(data) < 3 {
+	// // 	return "", nil, 0, fmt.Errorf("frame too short")
+	// // }
+	// //messageLength := binary.BigEndian.Uint16(lenBuf[:2])
+	// messageLength := binary.BigEndian.Uint16(data[:])
+
+	// payload := make([]byte, messageLength)
+	// transport := payload[0]
+	// return string(payload[1:]), payload, transport, nil
+	if len(data) < 3 { // Minimum size check
+		return "", 0, fmt.Errorf("frame too short")
 	}
+
+	// Extract message length
 	messageLength := binary.BigEndian.Uint16(data[:2])
-	if len(data) < int(messageLength)+3 {
-		return "", nil, 0, fmt.Errorf("payload length mismatch")
+	if len(data) < int(3+messageLength) { // Check if data matches the expected length
+		return "", 0, fmt.Errorf("payload length mismatch")
 	}
+
+	// Extract transport and payload
 	transport := data[2]
-	messageBuf := make([]byte, messageLength)
 	payload := data[3 : 3+messageLength]
-	return string(payload), messageBuf, transport, nil
+
+	return string(payload), transport, nil
 }
 
 func (n *NormalFrame) EncodeString(msg string) ([]byte, error) {
@@ -82,19 +95,6 @@ func (n *NormalFrame) DecodeString(data []byte) (string, []byte, error) {
 	return string(messageBuf), messageBuf, nil
 }
 
-func (n *NormalFrame) EncodeInt(port uint16) ([]byte, error) {
-	const headerSize = 2
-	buf := make([]byte, headerSize)
-	binary.BigEndian.PutUint16(buf, port)
-	return buf, nil
-}
-func (n *NormalFrame) DecodeInt(data []byte) (uint16, error) {
-	if len(data) < 2 {
-		return 0, fmt.Errorf("data too short for uint16")
-	}
-	return binary.BigEndian.Uint16(data[:2]), nil
-}
-
 // -------------------- Normal Frame --------------------
 
 // -------------------- Binary Frame --------------------
@@ -110,23 +110,79 @@ type BinaryFrameData struct {
 }
 
 func (b *BinaryFrame) Encode(msg string, transport byte) ([]byte, error) {
-	msgBytes := *(*[]byte)(unsafe.Pointer(&msg)) // no alloc conversion
+	// msgBytes := *(*[]byte)(unsafe.Pointer(&msg)) // no alloc conversion
+	// l := len(msgBytes)
+
+	// seed := byte(l*29+int(transport)) ^ 0xAA
+	// rot := ((seed << 4) | (seed >> 4))
+
+	// // Preallocate exact buffer
+	// buf := make([]byte, 3+l)
+	// buf[0] = seed
+	// buf[1] = transport ^ seed
+	// buf[2] = byte(l) ^ rot
+
+	// maskIndex := int(seed)
+	// for i := 0; i < l; i++ {
+	// 	buf[3+i] = msgBytes[i] ^ maskTable[maskIndex]
+	// 	maskIndex++
+	// }
+	// return buf, nil
+	// const maxMessageLength = 1024 // حداکثر طول پیام
+	// msgBytes := []byte(msg)
+	// l := len(msgBytes)
+
+	// // بررسی طول پیام
+	// if l > maxMessageLength {
+	// 	return nil, fmt.Errorf("message too long")
+	// }
+
+	// // تولید seed
+	// seed := byte(42) // مقدار ثابت برای مثال؛ می‌توانید از مقدار تصادفی استفاده کنید
+	// rot := ((seed << 4) | (seed >> 4))
+
+	// // استفاده از آرایه ثابت برای جلوگیری از تخصیص حافظه
+	// var buf [3 + maxMessageLength]byte
+	// buf[0] = seed
+	// buf[1] = transport ^ seed
+	// buf[2] = byte(l) ^ rot
+
+	// // رمزگذاری پیام
+	// maskIndex := int(seed)
+	// for i := 0; i < l; i++ {
+	// 	buf[3+i] = msgBytes[i] ^ maskTable[maskIndex]
+	// 	maskIndex++
+	// }
+
+	// // بازگرداندن داده‌های رمزگذاری‌شده
+	// return buf[:3+l], nil
+
+	const headerSize = 3
+	msgBytes := []byte(msg) // تبدیل پیام به بایت‌ها
 	l := len(msgBytes)
 
-	seed := byte(l*29+int(transport)) ^ 0xAA
-	rot := ((seed << 4) | (seed >> 4))
+	// بررسی طول پیام
+	if l > 65535 { // محدودیت طول پیام
+		return nil, fmt.Errorf("message too long")
+	}
 
-	// Preallocate exact buffer
-	buf := make([]byte, 3+l)
+	// تولید seed
+	seed := byte(l*29+int(transport)) ^ 0xAA
+	rot := (seed << 4) | (seed >> 4)
+
+	// تخصیص بافر برای هدر و پیام
+	buf := make([]byte, headerSize+l)
 	buf[0] = seed
 	buf[1] = transport ^ seed
 	buf[2] = byte(l) ^ rot
 
+	// رمزگذاری پیام
 	maskIndex := int(seed)
 	for i := 0; i < l; i++ {
-		buf[3+i] = msgBytes[i] ^ maskTable[maskIndex]
+		buf[headerSize+i] = msgBytes[i] ^ maskTable[maskIndex%len(maskTable)]
 		maskIndex++
 	}
+
 	return buf, nil
 }
 
@@ -151,28 +207,110 @@ func (b *BinaryFrame) EncodeString(msg string) ([]byte, error) {
 	return buf, nil
 }
 
-func (b *BinaryFrame) Decode(buf []byte) (string, []byte, byte, error) {
-	if len(buf) < 3 {
-		return "", nil, 0, fmt.Errorf("frame too short")
+func (b *BinaryFrame) Decode(buf []byte) (string, byte, error) {
+	// if len(buf) < 3 {
+	// 	return "", 0, fmt.Errorf("frame too short")
+	// }
+
+	// seed := buf[0]
+	// transport := buf[1] ^ seed
+	// rot := ((seed << 4) | (seed >> 4))
+	// l := int(buf[2] ^ rot)
+
+	// if len(buf) < 3+l {
+	// 	return "", 0, fmt.Errorf("length mismatch")
+	// }
+
+	// out := make([]byte, l)
+	// maskIndex := int(seed)
+	// for i := 0; i < l; i++ {
+	// 	out[i] = buf[3+i] ^ maskTable[maskIndex]
+	// 	maskIndex++
+	// }
+
+	// return string(out[:l]), transport, nil
+	// const maxMessageLength = 1024 // حداکثر طول پیام
+
+	// // بررسی طول داده‌ها
+	// if len(buf) < 3 {
+	// 	return "", 0, fmt.Errorf("frame too short")
+	// }
+
+	// // استخراج هدر
+	// seed := buf[0]
+	// transport := buf[1] ^ seed
+	// rot := ((seed << 4) | (seed >> 4))
+	// l := int(buf[2] ^ rot)
+
+	// // بررسی طول پیام
+	// if l > maxMessageLength {
+	// 	return "", 0, fmt.Errorf("message too long")
+	// }
+	// if len(buf) < 3+l {
+	// 	return "", 0, fmt.Errorf("length mismatch")
+	// }
+
+	// // استفاده از آرایه ثابت برای جلوگیری از تخصیص حافظه
+	// var out [maxMessageLength]byte
+	// maskIndex := int(seed)
+	// for i := 0; i < l; i++ {
+	// 	out[i] = buf[3+i] ^ maskTable[maskIndex]
+	// 	maskIndex++
+	// }
+
+	// // بازگرداندن پیام رمزگشایی‌شده
+	// return string(out[:l]), transport, nil
+
+	// const headerSize = 3
+
+	// // بررسی حداقل طول داده‌ها
+	// if len(buf) < headerSize {
+	// 	return "", 0, fmt.Errorf("frame too short")
+	// }
+
+	// // استخراج طول پیام از هدر
+	// messageLength := binary.BigEndian.Uint16(buf[:2])
+
+	// // بررسی طول داده‌ها
+	// if len(buf) < int(headerSize+messageLength) {
+	// 	return "", 0, fmt.Errorf("payload length mismatch")
+	// }
+
+	// // استخراج transport و پیام
+	// transport := buf[2]
+	// message := string(buf[headerSize : headerSize+messageLength])
+
+	// return message, transport, nil
+
+	const headerSize = 3
+
+	// بررسی حداقل طول داده‌ها
+	if len(buf) < headerSize {
+		return "", 0, fmt.Errorf("frame too short")
 	}
 
+	// استخراج هدر
 	seed := buf[0]
 	transport := buf[1] ^ seed
-	rot := ((seed << 4) | (seed >> 4))
-	l := int(buf[2] ^ rot)
+	rot := (seed << 4) | (seed >> 4)
+	messageLength := int(buf[2] ^ rot)
 
-	if len(buf) < 3+l {
-		return "", nil, 0, fmt.Errorf("length mismatch")
+	// بررسی طول پیام
+	if len(buf) < headerSize+messageLength {
+		return "", 0, fmt.Errorf("payload length mismatch")
 	}
 
-	out := make([]byte, l)
+	// رمزگشایی پیام
+	payload := buf[headerSize : headerSize+messageLength]
+	decodedMessage := make([]byte, messageLength)
 	maskIndex := int(seed)
-	for i := 0; i < l; i++ {
-		out[i] = buf[3+i] ^ maskTable[maskIndex]
+	for i := 0; i < messageLength; i++ {
+		decodedMessage[i] = payload[i] ^ maskTable[maskIndex%len(maskTable)]
 		maskIndex++
 	}
 
-	return bytesToString(out), out, transport, nil
+	// بازگرداندن پیام رمزگشایی‌شده
+	return string(decodedMessage), transport, nil
 }
 
 func (b *BinaryFrame) DecodeString(buf []byte) (string, []byte, error) {
